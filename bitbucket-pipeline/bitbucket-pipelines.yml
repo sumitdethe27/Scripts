@@ -1,0 +1,40 @@
+#CICD for ec2 
+image: ubuntu:latest
+pipelines:
+  branches:
+    release/development:
+          
+      - step: 
+          name: Testing (unit test)
+          image: mcr.microsoft.com/dotnet/sdk:6.0
+          script:
+            - pwd
+            - apt install git
+            - git clone -b release/development  https://username:$ACCESS_TOKEN@bitbucket-url
+            - cd repo && chmod +x script.sh  #executing the testing script
+            - ./script.sh
+      - step:  
+          name: SonarScanner  # checking code quality
+
+          script: 
+            - apt-get update
+            - apt-get install -y sshpass
+            - echo "$pass" | sshpass ssh -o StrictHostKeyChecking=no server@$ip 'rm -rf CICD && mkdir CICD && cd CICD && git clone -b main  https://username:'"$ACCESS_TOKEN"'@bitbucket-url'
+            - echo "$pass" | sshpass ssh -o StrictHostKeyChecking=no server@"$ip" 'cd CICD/repo/ && /var/opt/sonar-scanner-4.5.0.2216-linux/bin/sonar-scanner -Dsonar.projectKey='"$projectkey"' -Dsonar.sources=. -Dsonar.host.url='"$SONARURL"' -Dsonar.login='"$SONARTOKEN"''
+
+
+      - step:
+          name: Deploying app  
+          script:
+            - apt-get update
+            - apt-get install -y sshpass #ssh to the server
+            - echo "$pass" | sshpass ssh -o StrictHostKeyChecking=no server@$ip 'rm -rf CICD && mkdir CICD && cd CICD && git clone -b release/development  https://username:'"$ACCESS_TOKEN"'@bitbucket-url'
+            - echo "$pass" | sshpass ssh -o StrictHostKeyChecking=no server@$ip 'cd CICD/repo/ && docker build -t service -f Dockerfile .'
+            - echo "$pass" | sshpass ssh -o StrictHostKeyChecking=no server@$ip 'cp /home/server/repo/.env .'
+            - echo "$pass" | sshpass ssh -o StrictHostKeyChecking=no server@$ip 'TERM=xterm clear && docker ps --format "{{.ID}}\t{{.Ports}}" | grep -E ":80|:80" | awk "{print \$1}" | tr -d "[:space:]" | xargs docker stop' # stopping a existing container
+
+            - echo "$pass" | sshpass ssh -o StrictHostKeyChecking=no server@$ip 'docker run --env-file .env -d -p 80:80 service:latest'
+          condition:
+            changesets:
+              includePaths:
+                - "repo/folder/**"
